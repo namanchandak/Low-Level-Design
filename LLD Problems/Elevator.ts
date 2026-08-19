@@ -301,7 +301,7 @@ const startSystem = new ElevatorController(installElevtor);
 
 
 
-
+// // written by AI -------------------------------------------------------------------------------
 
 
 
@@ -324,7 +324,7 @@ const startSystem = new ElevatorController(installElevtor);
 
 
 
-// // written by AI
+
 // // --- SIMULATION RUN ---
 // console.log("=== STARTING ELEVATOR SIMULATION ===");
 // printSystemState(0);
