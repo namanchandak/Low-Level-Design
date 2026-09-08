@@ -12,6 +12,22 @@ class ParkingOrchestrator {
   floor: Map<string, Floor> = new Map();
   activeTickets: Map<string, ParkingTicket> = new Map();
 
+  addFloors(floorId: string){
+    if(this.floor.get(floorId))
+    {
+      throw new Error("This Floor Already Exist");
+      
+    }
+
+    // for now I hardcode 
+    // here I have used record first time need to look at Record
+    const floorConfig: Record<vehicleType, number> = {'BIKE' : 10, "CAR" : 12, "TRUCK": 4 };
+
+    const newFloor = new Floor(floorId, floorConfig )
+    this.floor.set(floorId, newFloor);
+
+  }
+
   parkVehicle(vehicle: Vehicle): ParkingTicket {
     for (const currentFloor of this.floor.values()) {
       const ticket = currentFloor.assingSpot(vehicle);
@@ -45,13 +61,32 @@ class ParkingOrchestrator {
   }
 }
 
+
 class Floor {
   floorId: string;
   spots: Map<string, ParkingSpot> = new Map();
 
-  constructor(floorId: string) {
+  constructor(floorId: string, config: Record<vehicleType, number> ) {
     this.floorId = floorId;
+
+
+    for(const [type, count ] of Object.entries(config))
+    {
+      for(let i=0; i< count; i++)
+      {
+        this.addSpotsToFloor(`${i+1}-${this.floorId}-${type}`, type as vehicleType  , floorId);
+      }
+
+    }
+    
+
   }
+
+  addSpotsToFloor(spotId: string, typeOfVehicle: vehicleType, floorId: string){
+    const newSpot = new ParkingSpot(spotId, typeOfVehicle , floorId);
+    this.spots.set(spotId, newSpot);
+  }
+  
 
   findVacantSpot(vehicleType: vehicleType): ParkingSpot | null {
     for (const spot of this.spots.values()) {
@@ -140,7 +175,181 @@ class Vehicle {
 }
 
 enum vehicleType {
-  CAR,
-  BUS,
-  TRUCK,
+  CAR = "CAR",
+  BIKE = "BIKE",
+  TRUCK = "TRUCK",
 }
+
+
+// const ParkingLot = new ParkingOrchestrator();
+// ParkingLot.addFloors("1");
+// ParkingLot.addFloors("2");
+// ParkingLot.addFloors("3");
+// ParkingLot.addFloors("4");
+// ParkingLot.addFloors("5");
+// ParkingLot.addFloors("6");
+
+
+
+
+
+// ============ TEST RUNNER (minimal, no framework) ============
+
+let passed = 0;
+let failed = 0;
+
+function test(name: string, fn: () => void) {
+  try {
+    fn();
+    console.log(`✅ PASS: ${name}`);
+    passed++;
+  } catch (err: any) {
+    console.log(`❌ FAIL: ${name} — ${err.message}`);
+    failed++;
+  }
+}
+
+function assertEqual(actual: any, expected: any, msg?: string) {
+  if (actual !== expected) {
+    throw new Error(msg ?? `expected ${expected}, got ${actual}`);
+  }
+}
+
+function assertThrows(fn: () => void, msg?: string) {
+  try {
+    fn();
+  } catch {
+    return;
+  }
+  throw new Error(msg ?? "expected function to throw, but it didn't");
+}
+
+function assertTrue(cond: boolean, msg?: string) {
+  if (!cond) throw new Error(msg ?? "expected condition to be true");
+}
+
+// ============ TESTS ============
+// NOTE: your addFloors() hardcodes { BIKE: 10, CAR: 12, TRUCK: 4 } internally,
+// so every floor created below has that same fixed capacity.
+
+test("addFloors creates a floor with correct total spot count (10+12+4=26)", () => {
+  const lot = new ParkingOrchestrator();
+  lot.addFloors("1");
+
+  const floor = lot.floor.get("1");
+  assertTrue(!!floor, "floor should exist after addFloors");
+  assertEqual(floor!.spots.size, 26, "floor should have 10 BIKE + 12 CAR + 4 TRUCK = 26 spots");
+});
+
+test("addFloors throws when adding a duplicate floorId", () => {
+  const lot = new ParkingOrchestrator();
+  lot.addFloors("1");
+  assertThrows(() => lot.addFloors("1"), "duplicate floorId should throw");
+});
+
+test("parkVehicle assigns a spot and returns a valid ticket", () => {
+  const lot = new ParkingOrchestrator();
+  lot.addFloors("1");
+
+  const car = new Vehicle("KA-01-1234", vehicleType.CAR);
+  const ticket = lot.parkVehicle(car);
+
+  assertEqual(ticket.vehicleNumber, "KA-01-1234");
+  assertEqual(ticket.floorId, "1");
+  assertTrue(lot.activeTickets.has(ticket.ticketId), "ticket should be tracked in activeTickets");
+});
+
+test("parkVehicle marks the assigned spot as occupied", () => {
+  const lot = new ParkingOrchestrator();
+  lot.addFloors("1");
+
+  const car = new Vehicle("KA-01-0001", vehicleType.CAR);
+  const ticket = lot.parkVehicle(car);
+
+  const floor = lot.floor.get("1")!;
+  const spot = floor.spots.get(ticket.spotId)!;
+  assertTrue(spot.isOccupied, "spot should be occupied after parking");
+  assertEqual(spot.vehicle?.vehicleNumber, "KA-01-0001");
+});
+
+test("parkVehicle throws when no vacant spot exists for that vehicle type (fill all 4 TRUCK spots)", () => {
+  const lot = new ParkingOrchestrator();
+  lot.addFloors("1");
+
+  for (let i = 0; i < 4; i++) {
+    lot.parkVehicle(new Vehicle(`TRUCK-${i}`, vehicleType.TRUCK));
+  }
+
+  assertThrows(
+    () => lot.parkVehicle(new Vehicle("TRUCK-OVERFLOW", vehicleType.TRUCK)),
+    "should throw once all 4 TRUCK spots on the only floor are full"
+  );
+});
+
+test("parkVehicle falls through to the next floor if current floor is full", () => {
+  const lot = new ParkingOrchestrator();
+  lot.addFloors("1");
+  lot.addFloors("2");
+
+  // fill all 4 TRUCK spots on floor 1
+  for (let i = 0; i < 4; i++) {
+    lot.parkVehicle(new Vehicle(`TRUCK-${i}`, vehicleType.TRUCK));
+  }
+
+  // 5th truck should land on floor 2
+  const ticket = lot.parkVehicle(new Vehicle("TRUCK-5", vehicleType.TRUCK));
+  assertEqual(ticket.floorId, "2", "should fall through to floor 2 once floor 1's TRUCK spots are full");
+});
+
+test("releaseVehicle frees the spot and removes ticket from activeTickets", () => {
+  const lot = new ParkingOrchestrator();
+  lot.addFloors("1");
+
+  const car = new Vehicle("KA-01-9999", vehicleType.CAR);
+  const ticket = lot.parkVehicle(car);
+
+  lot.releaseVehicle(ticket);
+
+  const floor = lot.floor.get("1")!;
+  const spot = floor.spots.get(ticket.spotId)!;
+  assertTrue(!spot.isOccupied, "spot should be free after release");
+  assertEqual(spot.vehicle, null, "spot's vehicle ref should be cleared after release");
+  assertTrue(!lot.activeTickets.has(ticket.ticketId), "ticket should be removed from activeTickets after release");
+});
+
+test("releaseVehicle throws on an unknown/invalid ticket", () => {
+  const lot = new ParkingOrchestrator();
+  lot.addFloors("1");
+
+  const fakeTicket = new ParkingTicket("GHOST-1", "nonexistent-spot", "1");
+  assertThrows(() => lot.releaseVehicle(fakeTicket), "should throw for a ticket never issued by this lot");
+});
+
+test("releasing a spot allows a new vehicle to be parked in it", () => {
+  const lot = new ParkingOrchestrator();
+  lot.addFloors("1");
+
+  const first = lot.parkVehicle(new Vehicle("CAR-A", vehicleType.CAR));
+  lot.releaseVehicle(first);
+
+  const second = lot.parkVehicle(new Vehicle("CAR-B", vehicleType.CAR));
+  assertEqual(second.spotId, first.spotId, "the same physical spot should be reused");
+});
+
+test("ParkingSpot.assing throws when vehicle type doesn't match spot type", () => {
+  const spot = new ParkingSpot("spot-1", vehicleType.CAR, "1");
+  const truck = new Vehicle("TRUCK-99", vehicleType.TRUCK);
+  assertThrows(() => spot.assing(truck), "assigning a truck to a car-only spot should throw");
+});
+
+test("ParkingSpot.assing returns null when already occupied", () => {
+  const spot = new ParkingSpot("spot-1", vehicleType.CAR, "1");
+  spot.assing(new Vehicle("CAR-1", vehicleType.CAR));
+
+  const result = spot.assing(new Vehicle("CAR-2", vehicleType.CAR));
+  assertEqual(result, null, "assigning to an already-occupied spot should return null, not throw");
+});
+
+// ============ RESULTS ============
+
+console.log(`\n${passed} passed, ${failed} failed`);
