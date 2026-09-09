@@ -233,8 +233,7 @@ class CardPayment implements PaymentStrategy{
 
 
 
-
-// ============ TEST RUNNER (minimal, no framework) ============
+// ============ TEST RUNNER ============
 
 let passed = 0;
 let failed = 0;
@@ -251,144 +250,289 @@ function test(name: string, fn: () => void) {
 }
 
 function assertEqual(actual: any, expected: any, msg?: string) {
-  if (actual !== expected) {
-    throw new Error(msg ?? `expected ${expected}, got ${actual}`);
-  }
+  if (actual !== expected) throw new Error(msg ?? `expected ${expected}, got ${actual}`);
 }
-
 function assertThrows(fn: () => void, msg?: string) {
-  try {
-    fn();
-  } catch {
-    return;
-  }
+  try { fn(); } catch { return; }
   throw new Error(msg ?? "expected function to throw, but it didn't");
 }
-
 function assertTrue(cond: boolean, msg?: string) {
   if (!cond) throw new Error(msg ?? "expected condition to be true");
 }
+function assertApprox(actual: number, expected: number, tolerance: number, msg?: string) {
+  if (Math.abs(actual - expected) > tolerance) {
+    throw new Error(msg ?? `expected ~${expected} (±${tolerance}), got ${actual}`);
+  }
+}
 
-// ============ TESTS ============
-// NOTE: your addFloors() hardcodes { BIKE: 10, CAR: 12, TRUCK: 4 } internally,
-// so every floor created below has that same fixed capacity.
+// A payment strategy you control, for testing success/failure paths deterministically
+class AlwaysSucceedsPayment implements PaymentStrategy {
+  lastAmount: number | null = null;
+  makePayment(amount: number): boolean {
+    this.lastAmount = amount;
+    return true;
+  }
+}
+class AlwaysFailsPayment implements PaymentStrategy {
+  makePayment(_amount: number): boolean {
+    return false;
+  }
+}
 
-test("addFloors creates a floor with correct total spot count (10+12+4=26)", () => {
+// ============ FLOOR / SETUP TESTS ============
+
+test("addFloors creates a floor with correct total spot count (10 BIKE + 12 CAR + 4 TRUCK = 26)", () => {
   const lot = new ParkingOrchestrator();
   lot.addFloors("1");
-
   const floor = lot.floor.get("1");
-  assertTrue(!!floor, "floor should exist after addFloors");
-  assertEqual(floor!.spots.size, 26, "floor should have 10 BIKE + 12 CAR + 4 TRUCK = 26 spots");
+  assertTrue(!!floor, "floor should exist");
+  assertEqual(floor!.spots.size, 26);
 });
 
-test("addFloors throws when adding a duplicate floorId", () => {
+test("addFloors throws on duplicate floorId", () => {
   const lot = new ParkingOrchestrator();
   lot.addFloors("1");
-  assertThrows(() => lot.addFloors("1"), "duplicate floorId should throw");
+  assertThrows(() => lot.addFloors("1"));
 });
 
-test("parkVehicle assigns a spot and returns a valid ticket", () => {
+test("addFloors allows multiple distinct floors", () => {
   const lot = new ParkingOrchestrator();
   lot.addFloors("1");
+  lot.addFloors("2");
+  lot.addFloors("3");
+  assertEqual(lot.floor.size, 3);
+});
 
-  const car = new Vehicle("KA-01-1234", vehicleType.CAR);
-  const ticket = lot.parkVehicle(car);
+// ============ PARKING TESTS ============
 
-  assertEqual(ticket.vehicleNumber, "KA-01-1234");
+test("parkVehicle assigns a spot and returns a ticket with correct fields", () => {
+  const lot = new ParkingOrchestrator();
+  lot.addFloors("1");
+  const ticket = lot.parkVehicle(new Vehicle("CAR-1", vehicleType.CAR));
+
+  assertEqual(ticket.vehicleNumber, "CAR-1");
   assertEqual(ticket.floorId, "1");
-  assertTrue(lot.activeTickets.has(ticket.ticketId), "ticket should be tracked in activeTickets");
+  assertTrue(lot.activeTickets.has(ticket.ticketId));
 });
 
-test("parkVehicle marks the assigned spot as occupied", () => {
+test("parkVehicle marks spot occupied and stores the vehicle reference", () => {
+  const lot = new ParkingOrchestrator();
+  lot.addFloors("1");
+  const ticket = lot.parkVehicle(new Vehicle("CAR-1", vehicleType.CAR));
+
+  const spot = lot.floor.get("1")!.spots.get(ticket.spotId)!;
+  assertTrue(spot.isOccupied);
+  assertEqual(spot.vehicle?.vehicleNumber, "CAR-1");
+});
+
+test("parkVehicle assigns each vehicle type to a spot of the matching type only", () => {
   const lot = new ParkingOrchestrator();
   lot.addFloors("1");
 
-  const car = new Vehicle("KA-01-0001", vehicleType.CAR);
-  const ticket = lot.parkVehicle(car);
+  const bikeTicket = lot.parkVehicle(new Vehicle("BIKE-1", vehicleType.BIKE));
+  const truckTicket = lot.parkVehicle(new Vehicle("TRUCK-1", vehicleType.TRUCK));
 
   const floor = lot.floor.get("1")!;
-  const spot = floor.spots.get(ticket.spotId)!;
-  assertTrue(spot.isOccupied, "spot should be occupied after parking");
-  assertEqual(spot.vehicle?.vehicleNumber, "KA-01-0001");
+  assertEqual(floor.spots.get(bikeTicket.spotId)!.typeOfVehicle, vehicleType.BIKE);
+  assertEqual(floor.spots.get(truckTicket.spotId)!.typeOfVehicle, vehicleType.TRUCK);
 });
 
-test("parkVehicle throws when no vacant spot exists for that vehicle type (fill all 4 TRUCK spots)", () => {
+test("parkVehicle throws once all spots of a given type are full (exhaust 4 TRUCK spots)", () => {
   const lot = new ParkingOrchestrator();
   lot.addFloors("1");
+  for (let i = 0; i < 4; i++) lot.parkVehicle(new Vehicle(`TRUCK-${i}`, vehicleType.TRUCK));
 
-  for (let i = 0; i < 4; i++) {
-    lot.parkVehicle(new Vehicle(`TRUCK-${i}`, vehicleType.TRUCK));
-  }
-
-  assertThrows(
-    () => lot.parkVehicle(new Vehicle("TRUCK-OVERFLOW", vehicleType.TRUCK)),
-    "should throw once all 4 TRUCK spots on the only floor are full"
-  );
+  assertThrows(() => lot.parkVehicle(new Vehicle("TRUCK-OVERFLOW", vehicleType.TRUCK)));
 });
 
-test("parkVehicle falls through to the next floor if current floor is full", () => {
+test("parkVehicle throws when zero floors exist", () => {
+  const lot = new ParkingOrchestrator();
+  assertThrows(() => lot.parkVehicle(new Vehicle("CAR-1", vehicleType.CAR)));
+});
+
+test("parkVehicle falls through to the next floor once the first is full", () => {
   const lot = new ParkingOrchestrator();
   lot.addFloors("1");
   lot.addFloors("2");
 
-  // fill all 4 TRUCK spots on floor 1
-  for (let i = 0; i < 4; i++) {
-    lot.parkVehicle(new Vehicle(`TRUCK-${i}`, vehicleType.TRUCK));
-  }
-
-  // 5th truck should land on floor 2
+  for (let i = 0; i < 4; i++) lot.parkVehicle(new Vehicle(`TRUCK-${i}`, vehicleType.TRUCK));
   const ticket = lot.parkVehicle(new Vehicle("TRUCK-5", vehicleType.TRUCK));
-  assertEqual(ticket.floorId, "2", "should fall through to floor 2 once floor 1's TRUCK spots are full");
+
+  assertEqual(ticket.floorId, "2");
 });
 
-test("releaseVehicle frees the spot and removes ticket from activeTickets", () => {
+test("different vehicle types don't compete for the same spot pool", () => {
   const lot = new ParkingOrchestrator();
   lot.addFloors("1");
+  for (let i = 0; i < 4; i++) lot.parkVehicle(new Vehicle(`TRUCK-${i}`, vehicleType.TRUCK)); // fill all trucks
 
-  const car = new Vehicle("KA-01-9999", vehicleType.CAR);
-  const ticket = lot.parkVehicle(car);
-
-  lot.releaseVehicle(ticket, new UpiPayment());
-
-  const floor = lot.floor.get("1")!;
-  const spot = floor.spots.get(ticket.spotId)!;
-  assertTrue(!spot.isOccupied, "spot should be free after release");
-  assertEqual(spot.vehicle, null, "spot's vehicle ref should be cleared after release");
-  assertTrue(!lot.activeTickets.has(ticket.ticketId), "ticket should be removed from activeTickets after release");
+  // CAR spots should be untouched — this should NOT throw
+  const carTicket = lot.parkVehicle(new Vehicle("CAR-1", vehicleType.CAR));
+  assertTrue(!!carTicket);
 });
 
-test("releaseVehicle throws on an unknown/invalid ticket", () => {
-  const lot = new ParkingOrchestrator();
-  lot.addFloors("1");
-
-  const fakeTicket = new ParkingTicket("GHOST-1", "nonexistent-spot", "1");
-  assertThrows(() => lot.releaseVehicle(fakeTicket, new CashPayment()), "should throw for a ticket never issued by this lot");
-});
-
-test("releasing a spot allows a new vehicle to be parked in it", () => {
-  const lot = new ParkingOrchestrator();
-  lot.addFloors("1");
-
-  const first = lot.parkVehicle(new Vehicle("CAR-A", vehicleType.CAR));
-  lot.releaseVehicle(first, new CardPayment());
-
-  const second = lot.parkVehicle(new Vehicle("CAR-B", vehicleType.CAR));
-  assertEqual(second.spotId, first.spotId, "the same physical spot should be reused");
-});
+// ============ SPOT-LEVEL TESTS ============
 
 test("ParkingSpot.assing throws when vehicle type doesn't match spot type", () => {
-  const spot = new ParkingSpot("spot-1", vehicleType.CAR, "1");
-  const truck = new Vehicle("TRUCK-99", vehicleType.TRUCK);
-  assertThrows(() => spot.assing(truck), "assigning a truck to a car-only spot should throw");
+  const spot = new ParkingSpot("s1", vehicleType.CAR, "1");
+  assertThrows(() => spot.assing(new Vehicle("TRUCK-1", vehicleType.TRUCK)));
 });
 
-test("ParkingSpot.assing returns null when already occupied", () => {
-  const spot = new ParkingSpot("spot-1", vehicleType.CAR, "1");
+test("ParkingSpot.assing returns null (not throw) when already occupied by same type", () => {
+  const spot = new ParkingSpot("s1", vehicleType.CAR, "1");
   spot.assing(new Vehicle("CAR-1", vehicleType.CAR));
-
   const result = spot.assing(new Vehicle("CAR-2", vehicleType.CAR));
-  assertEqual(result, null, "assigning to an already-occupied spot should return null, not throw");
+  assertEqual(result, null);
+});
+
+test("ParkingSpot.releaseVehicle clears occupied flag and vehicle reference", () => {
+  const spot = new ParkingSpot("s1", vehicleType.CAR, "1");
+  const ticket = spot.assing(new Vehicle("CAR-1", vehicleType.CAR))!;
+  spot.releaseVehicle(ticket);
+
+  assertTrue(!spot.isOccupied);
+  assertEqual(spot.vehicle, null);
+});
+
+// ============ RELEASE / PAYMENT TESTS ============
+
+test("releaseVehicle frees the spot and removes the ticket on successful payment", () => {
+  const lot = new ParkingOrchestrator();
+  lot.addFloors("1");
+  const ticket = lot.parkVehicle(new Vehicle("CAR-1", vehicleType.CAR));
+
+  lot.releaseVehicle(ticket, new AlwaysSucceedsPayment());
+
+  const spot = lot.floor.get("1")!.spots.get(ticket.spotId)!;
+  assertTrue(!spot.isOccupied);
+  assertEqual(spot.vehicle, null);
+  assertTrue(!lot.activeTickets.has(ticket.ticketId));
+});
+
+test("releaseVehicle throws on an invalid/unknown ticketId", () => {
+  const lot = new ParkingOrchestrator();
+  lot.addFloors("1");
+  const fakeTicket = new ParkingTicket("GHOST", "no-such-spot", "1");
+  assertThrows(() => lot.releaseVehicle(fakeTicket, new AlwaysSucceedsPayment()));
+});
+
+test("releaseVehicle throws when payment fails, and does NOT free the spot", () => {
+  const lot = new ParkingOrchestrator();
+  lot.addFloors("1");
+  const ticket = lot.parkVehicle(new Vehicle("CAR-1", vehicleType.CAR));
+
+  assertThrows(() => lot.releaseVehicle(ticket, new AlwaysFailsPayment()));
+
+  // critical: spot must STILL be occupied since payment failed
+  const spot = lot.floor.get("1")!.spots.get(ticket.spotId)!;
+  assertTrue(spot.isOccupied, "spot should remain occupied if payment failed");
+  assertTrue(lot.activeTickets.has(ticket.ticketId), "ticket should remain active if payment failed");
+});
+
+test("releasing frees the spot for reuse by a new vehicle", () => {
+  const lot = new ParkingOrchestrator();
+  lot.addFloors("1");
+  const first = lot.parkVehicle(new Vehicle("CAR-A", vehicleType.CAR));
+  lot.releaseVehicle(first, new AlwaysSucceedsPayment());
+
+  const second = lot.parkVehicle(new Vehicle("CAR-B", vehicleType.CAR));
+  assertEqual(second.spotId, first.spotId);
+});
+
+test("releasing the same ticket twice throws the second time", () => {
+  const lot = new ParkingOrchestrator();
+  lot.addFloors("1");
+  const ticket = lot.parkVehicle(new Vehicle("CAR-1", vehicleType.CAR));
+
+  lot.releaseVehicle(ticket, new AlwaysSucceedsPayment());
+  assertThrows(() => lot.releaseVehicle(ticket, new AlwaysSucceedsPayment()));
+});
+
+// ============ FEE CALCULATION TESTS ============
+
+test("fee is proportional to elapsed time (~20/hour rate)", () => {
+  const lot = new ParkingOrchestrator();
+  lot.addFloors("1");
+  const ticket = lot.parkVehicle(new Vehicle("CAR-1", vehicleType.CAR));
+
+  // simulate 2 hours having passed by backdating entryTime
+  ticket.entryTime = new Date(Date.now() - 2 * 60 * 60 * 1000);
+
+  const payment = new AlwaysSucceedsPayment();
+  lot.releaseVehicle(ticket, payment);
+
+  assertApprox(payment.lastAmount!, 40, 1, "2 hours at 20/hour should charge ~40");
+});
+
+test("fee for a very short duration is near zero, not negative", () => {
+  const lot = new ParkingOrchestrator();
+  lot.addFloors("1");
+  const ticket = lot.parkVehicle(new Vehicle("CAR-1", vehicleType.CAR));
+
+  const payment = new AlwaysSucceedsPayment();
+  lot.releaseVehicle(ticket, payment);
+
+  assertTrue(payment.lastAmount! >= 0, "fee should never be negative");
+});
+
+// ============ TRUST-BOUNDARY / TAMPERING TEST ============
+// This test targets the bug where releaseVehicle uses the caller-supplied
+// `ticket` object instead of the internally looked-up `releaseTicket`.
+// It SHOULD PASS once releaseVehicle uses releaseTicket consistently;
+// it will FAIL if the code still trusts the caller's object for entryTime/fee calc.
+
+test("releaseVehicle computes fee from the STORED ticket's entryTime, not a caller-supplied fake one", () => {
+  const lot = new ParkingOrchestrator();
+  lot.addFloors("1");
+  const realTicket = lot.parkVehicle(new Vehicle("CAR-1", vehicleType.CAR));
+
+  // backdate the REAL stored ticket by 5 hours (should cost ~100)
+  realTicket.entryTime = new Date(Date.now() - 5 * 60 * 60 * 1000);
+
+  // attacker/bug scenario: construct a lookalike ticket with the same ticketId
+  // but a tampered (very recent) entryTime, hoping to be undercharged
+  const tamperedTicket = new ParkingTicket(realTicket.vehicleNumber, realTicket.spotId, realTicket.floorId);
+  tamperedTicket.ticketId = realTicket.ticketId; // same ID as the real one
+  tamperedTicket.entryTime = new Date(); // "just parked" — should NOT be trusted
+
+  const payment = new AlwaysSucceedsPayment();
+  lot.releaseVehicle(tamperedTicket, payment);
+
+  assertApprox(
+    payment.lastAmount!,
+    100,
+    1,
+    "fee must be based on the internally stored ticket's entryTime (~100), not the caller-supplied tampered one"
+  );
+});
+
+// ============ PAYMENT STRATEGY TESTS ============
+
+test("CashPayment.makePayment returns true", () => {
+  assertEqual(new CashPayment().makePayment(50), true);
+});
+test("CardPayment.makePayment returns true", () => {
+  assertEqual(new CardPayment().makePayment(50), true);
+});
+test("UpiPayment.makePayment returns true", () => {
+  assertEqual(new UpiPayment().makePayment(50), true);
+});
+
+// ============ SEQUENTIAL "RACE-LIKE" TEST ============
+// Not true concurrency (Node is single-threaded), but proves that
+// two back-to-back attempts on a 1-spot floor never both succeed.
+
+test("only one of two rapid park attempts on a single-spot type succeeds", () => {
+  const lot = new ParkingOrchestrator(); // 4 TRUCK spots on default config
+  lot.addFloors("1");
+  for (let i = 0; i < 3; i++) lot.parkVehicle(new Vehicle(`FILLER-${i}`, vehicleType.TRUCK)); // leave exactly 1 TRUCK spot
+
+  const t1 = lot.parkVehicle(new Vehicle("TRUCK-RACE-1", vehicleType.TRUCK)); // takes the last spot
+  assertThrows(
+    () => lot.parkVehicle(new Vehicle("TRUCK-RACE-2", vehicleType.TRUCK)),
+    "second attempt on the same last spot must fail, not double-book it"
+  );
+  assertTrue(!!t1);
 });
 
 // ============ RESULTS ============
