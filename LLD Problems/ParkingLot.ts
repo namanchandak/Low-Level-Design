@@ -40,7 +40,7 @@ class ParkingOrchestrator {
     throw new Error("No Vacant Space found");
   }
 
-  releaseVehicle(ticket: ParkingTicket) {
+  releaseVehicle(ticket: ParkingTicket, payment: PaymentStrategy) {
     // need to apply payment strategy here
 
     const releaseTicket = this.activeTickets.get(ticket.ticketId);
@@ -55,9 +55,20 @@ class ParkingOrchestrator {
     if (!releaseFloor) {
       throw new Error("This floor is not exist");
     }
-    releaseFloor.releaseSpot(ticket);
 
-    this.activeTickets.delete(ticket.ticketId)
+    function calculateAmount (releaseTicket: ParkingTicket): number{
+        const timeLapse = Date.now() - releaseTicket.entryTime.getTime() ;
+        return timeLapse * 20 / (1000 * 60 * 60 );
+    }
+
+    if(!payment.makePayment(calculateAmount(releaseTicket)))
+    {
+      throw new Error("Payment Failed");
+    }
+
+    releaseFloor.releaseSpot(releaseTicket);
+
+    this.activeTickets.delete(releaseTicket.ticketId)
   }
 }
 
@@ -79,7 +90,6 @@ class Floor {
 
     }
     
-
   }
 
   addSpotsToFloor(spotId: string, typeOfVehicle: vehicleType, floorId: string){
@@ -149,14 +159,14 @@ class ParkingSpot {
 }
 
 class ParkingTicket {
-  entryTime: EpochTimeStamp;
+  entryTime: Date;
   vehicleNumber: string;
   ticketId: string;
   spotId: string;
   floorId: string;
 
   constructor(vehicleNumber: string, spotId: string, floorId: string) {
-    this.entryTime = Date.now();
+    this.entryTime = new Date();
     this.vehicleNumber = vehicleNumber;
     this.ticketId = vehicleNumber + this.entryTime;
     this.spotId = spotId;
@@ -178,6 +188,37 @@ enum vehicleType {
   CAR = "CAR",
   BIKE = "BIKE",
   TRUCK = "TRUCK",
+}
+
+interface PaymentStrategy{
+  makePayment(amount : number): boolean
+}
+
+class UpiPayment implements PaymentStrategy{
+  
+  makePayment(amount: number): boolean {
+    console.log(`Upi payment successful ${amount}`)  
+    return true;
+  }
+
+}
+
+class CashPayment implements PaymentStrategy{
+  
+  makePayment(amount: number): boolean {
+    console.log(`cash payment successful ${amount}`) 
+    return true; 
+  }
+
+}
+
+class CardPayment implements PaymentStrategy{
+  
+  makePayment(amount: number): boolean {
+    console.log(`Card payment successful ${amount}`)  
+    return true;
+  }
+
 }
 
 
@@ -308,7 +349,7 @@ test("releaseVehicle frees the spot and removes ticket from activeTickets", () =
   const car = new Vehicle("KA-01-9999", vehicleType.CAR);
   const ticket = lot.parkVehicle(car);
 
-  lot.releaseVehicle(ticket);
+  lot.releaseVehicle(ticket, new UpiPayment());
 
   const floor = lot.floor.get("1")!;
   const spot = floor.spots.get(ticket.spotId)!;
@@ -322,7 +363,7 @@ test("releaseVehicle throws on an unknown/invalid ticket", () => {
   lot.addFloors("1");
 
   const fakeTicket = new ParkingTicket("GHOST-1", "nonexistent-spot", "1");
-  assertThrows(() => lot.releaseVehicle(fakeTicket), "should throw for a ticket never issued by this lot");
+  assertThrows(() => lot.releaseVehicle(fakeTicket, new CashPayment()), "should throw for a ticket never issued by this lot");
 });
 
 test("releasing a spot allows a new vehicle to be parked in it", () => {
@@ -330,7 +371,7 @@ test("releasing a spot allows a new vehicle to be parked in it", () => {
   lot.addFloors("1");
 
   const first = lot.parkVehicle(new Vehicle("CAR-A", vehicleType.CAR));
-  lot.releaseVehicle(first);
+  lot.releaseVehicle(first, new CardPayment());
 
   const second = lot.parkVehicle(new Vehicle("CAR-B", vehicleType.CAR));
   assertEqual(second.spotId, first.spotId, "the same physical spot should be reused");
