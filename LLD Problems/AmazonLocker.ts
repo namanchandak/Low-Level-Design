@@ -25,6 +25,7 @@
 // - Payment or pricing
 
 
+
 class LockingMaster{
     compartment: Compartment[];
     TokenMap = new Map<string, Token>();
@@ -173,3 +174,4 @@ const compartment7 = new Compartment(Size.medium)
 
 
 const locker = new LockingMaster([compartment1,compartment2,compartment3,compartment4, compartment5, compartment6, compartment7])
+
