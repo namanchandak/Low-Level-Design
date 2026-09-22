@@ -24,154 +24,150 @@
 // - Multiple locker stations
 // - Payment or pricing
 
+class LockingMaster {
+  compartment: Compartment[];
+  TokenMap = new Map<string, Token>();
 
+  constructor(compartment: Compartment[]) {
+    this.compartment = compartment;
+  }
 
-class LockingMaster{
-    compartment: Compartment[];
-    TokenMap = new Map<string, Token>();
+  depositPackage(requestedSize: Size): string {
 
-    constructor(compartment: Compartment[])
-    {
-        this.compartment = compartment;
-    }
-
-
-    depositPackage(size: Size): string{
-
-        for(let i=0; i< this.compartment.length; i++)
-        {
-            const currentCompartment = this.compartment[i]
-            if(currentCompartment.getSize() == size && currentCompartment.isOccupied() == false )
-            {
-                const token = new Token( crypto.randomUUID(), currentCompartment);
-                this.TokenMap.set(token.getToken(), token )
-                currentCompartment.occupy()
-                return token.getToken();
-
-            }
-        }
-
-        throw new Error("No vaccant compartment")
-        
-    }
-
-    collectPackage(token: string){
-
-        const collectToken = this.TokenMap.get(token);
-        if(!collectToken)
-        {
-            throw new Error("This token is Invalid")
-        }
-        if(collectToken.isExpired())
-        {
-            throw new Error("Token Expired")
-        }
-
-        const openCompartment = collectToken.compartment;
-
-        if(!this.compartment.includes(openCompartment))
-        {
-            throw new Error("This compartment doesn't exist")
-        }
-        
-        openCompartment.open();
-        openCompartment.release()
-        
-        this.TokenMap.delete(token)
-
-    }
-
-    collectExpired()
-    {
-        this.TokenMap.forEach(( value, key,) =>{
-            if(value.isExpired())
-            {
-                this.TokenMap.delete(key);
-                value.compartment.open();
-                value.compartment.release();
-                
-            }
-        })
-        
-    }
-
-}
-
-class Token{
-    token: string;
-    expire: EpochTimeStamp;
-    compartment: Compartment
-
-    constructor(token: string, compartment: Compartment)
-    {
-        this.token = token;
-        this.expire = Date.now() + 7 *24 * 60 * 60 * 1000 ;
-        this.compartment = compartment;
-    }
-
-    getToken(): string{
-        return this.token
-    }
-
-    isExpired():boolean{
-        return Date.now() > this.expire ;
-    }
-
-}
-
-
-class Compartment{
-    occupied: boolean;
-    size: Size
-
-    constructor(size: Size)
-    {
-        this.size = size;
-
-        this.occupied = false
-    }
-
-    isOccupied(): boolean
-    {
-        return this.occupied
-    }
-
-    getSize(): Size
-    {
-        return this.size;
-    }
-
-    occupy(){
-        this.occupied = true;
-    }
-
-    release(){
-        this.occupied = false;
-    }
-
-    open()
-    {
-        console.log("This Compartment is open")
-    }
+    // to confirm package is placed -
+    // we can have 2 phase commit 
     
+    const sizeInOrder = [Size.small, Size.medium, Size.large];
+
+    for (
+        // @me 
+      let index = sizeInOrder.findIndex(
+        (givenSize) => givenSize === requestedSize,
+      );
+      index < sizeInOrder.length;
+      index++
+    ) {
+      for (let i = 0; i < this.compartment.length; i++) {
+        const currentCompartment = this.compartment[i];
+        if (
+          currentCompartment.getSize() == sizeInOrder[index] &&
+          currentCompartment.isOccupied() == false
+        ) {
+          const token = new Token(crypto.randomUUID(), currentCompartment);
+          this.TokenMap.set(token.getToken(), token);
+          currentCompartment.occupy();
+          return token.getToken();
+        }
+      }
+    }
+
+    throw new Error("No vaccant compartment");
+  }
+
+  collectPackage(token: string) {
+    const collectToken = this.TokenMap.get(token);
+    if (!collectToken) {
+      throw new Error("This token is Invalid");
+    }
+    if (collectToken.isExpired()) {
+      throw new Error("Token Expired");
+    }
+
+    const openCompartment = collectToken.compartment;
+
+    if (!this.compartment.includes(openCompartment)) {
+      throw new Error("This compartment doesn't exist");
+    }
+
+    openCompartment.open();
+    openCompartment.release();
+
+    this.TokenMap.delete(token);
+  }
+
+  collectExpired() {
+    this.TokenMap.forEach((value, key) => {
+      if (value.isExpired()) {
+        // this.TokenMap.delete(key);
+        // we may delete later on
+        value.compartment.open();
+        value.compartment.release();
+      }
+    });
+  }
 }
 
-enum Size{
-    small,
-    medium, 
-    large
+class Token {
+  token: string;
+  expire: EpochTimeStamp;
+  compartment: Compartment;
+
+  constructor(token: string, compartment: Compartment) {
+    this.token = token;
+    this.expire = Date.now() + 7 * 24 * 60 * 60 * 1000;
+    this.compartment = compartment;
+  }
+
+  getToken(): string {
+    return this.token;
+  }
+
+  isExpired(): boolean {
+    return Date.now() > this.expire;
+  }
 }
 
+class Compartment {
+  occupied: boolean;
+  size: Size;
 
-const compartment1 = new Compartment(Size.large) 
-const compartment2 = new Compartment(Size.small) 
-const compartment3 = new Compartment(Size.large) 
-const compartment4 = new Compartment(Size.small) 
-const compartment5 = new Compartment(Size.medium) 
-const compartment6 = new Compartment(Size.medium) 
-const compartment7 = new Compartment(Size.medium) 
+  constructor(size: Size) {
+    this.size = size;
 
+    this.occupied = false;
+  }
 
+  isOccupied(): boolean {
+    return this.occupied;
+  }
 
-const locker = new LockingMaster([compartment1,compartment2,compartment3,compartment4, compartment5, compartment6, compartment7])
+  getSize(): Size {
+    return this.size;
+  }
 
+  occupy() {
+    this.occupied = true;
+  }
+
+  release() {
+    this.occupied = false;
+  }
+
+  open() {
+    console.log("This Compartment is open");
+  }
+}
+
+enum Size {
+  small,
+  medium,
+  large,
+}
+
+const compartment1 = new Compartment(Size.large);
+const compartment2 = new Compartment(Size.small);
+const compartment3 = new Compartment(Size.large);
+const compartment4 = new Compartment(Size.small);
+const compartment5 = new Compartment(Size.medium);
+const compartment6 = new Compartment(Size.medium);
+const compartment7 = new Compartment(Size.medium);
+
+const locker = new LockingMaster([
+  compartment1,
+  compartment2,
+  compartment3,
+  compartment4,
+  compartment5,
+  compartment6,
+  compartment7,
+]);
